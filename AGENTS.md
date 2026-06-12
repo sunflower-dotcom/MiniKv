@@ -16,6 +16,7 @@ cd build && ctest
 # Run a single test by tag
 ./build/minikv-tests "[kv]"
 ./build/minikv-tests "[memtable]"
+./build/minikv-tests "[wal]"
 
 # Interactive CLI
 ./build/minikv-cli
@@ -24,7 +25,7 @@ cd build && ctest
 ## Architecture
 
 - **Static library** `minikv` (src/) + **public header** in `include/minikv/`
-- **Phase-based development** (7 stages in README.md). Currently: Phase 1 (skeleton) done; Phase 2 (MemTable) has a real SkipList implementation in `src/memtable/skiplist.h`.
+- **Phase-based development** (7 stages in README.md). Currently: Phase 1 (skeleton) done; Phase 2 (MemTable) has a real SkipList implementation in `src/memtable/skiplist.h`; Phase 3 (WAL) has a real write-ahead log implementation in `src/wal/wal.cpp`.
 - **PIMPL idiom**: every public class (`DB`, `MemTable`) hides implementation in a `struct Impl` with `std::unique_ptr<Impl> p_`
 - **Tombstone pattern**: deletions are represented as `__TOMBSTONE__` sentinel values in MemTable
 - **Config namespace**: all public types are in `namespace minikv`

@@ -17,12 +17,15 @@ set(MINIKV_SOURCES
   src/kv.cpp
   src/memtable/memtable.cpp
   src/memtable/skiplist.h
+  src/wal/wal.cpp
+  src/wal/crc32.h
 )
 
 set(MINIKV_HEADERS
   include/minikv/kv.h
   include/minikv/options.h
   include/minikv/memtable/memtable.h
+  include/minikv/wal/wal.h
 )
 
 add_library(minikv STATIC ${MINIKV_SOURCES} ${MINIKV_HEADERS})
@@ -46,6 +49,7 @@ include(Catch)
 add_executable(minikv-tests
   tests/test_kv.cpp
   tests/test_memtable.cpp
+  tests/test_wal.cpp
 )
 target_link_libraries(minikv-tests PRIVATE minikv Catch2::Catch2WithMain)
 catch_discover_tests(minikv-tests)

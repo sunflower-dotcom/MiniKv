@@ -27,7 +27,7 @@
 |------|------|------|
 | 1 | 项目骨架、公共接口 | ✅ 完成 |
 | 2 | MemTable（跳表实现） | ✅ 完成 |
-| 3 | WAL 预写日志 | ⬜ 待开始 |
+| 3 | WAL 预写日志 | ✅ 完成 |
 | 4 | SSTable 磁盘文件 | ⬜ 待开始 |
 | 5 | Compaction 归并合并 | ⬜ 待开始 |
 | 6 | Bloom Filter | ⬜ 待开始 |
@@ -117,6 +117,123 @@ src/memtable/memtable.cpp           ← MemTable::Impl（持有 SkipList）
 src/memtable/skiplist.h             ← 跳表实现（header-only）
 ```
 
+## WAL — 预写日志
+
+`src/wal/wal.cpp` — 追加写日志，保证崩溃后数据可恢复。遵循 LevelDB 的块式记录格式。
+
+### 核心原理
+
+```
+写入请求
+   │
+   ▼
+┌──────────────┐
+│ WAL append   │  ← 先写日志（顺序 I/O，磁盘持久化）
+└──────┬───────┘
+       │ fsync（可配置同步策略）
+       ▼
+┌──────────────┐
+│ MemTable     │  ← 再写内存（跳表）
+└──────────────┘
+
+崩溃恢复：重放 WAL → 重建 MemTable
+```
+
+### WAL 文件格式
+
+**块结构**（默认 4KB，来自 `Options::block_size`）
+
+```
+Block
+┌───────────────────────────────────────────────────────────
+│ Record 1 │ Record 2 │ ... │ Record N │ Zero Padding │
+└───────────────────────────────────────────────────────────
+尾部不足 7 字节时填充零（Record 头部固定 7 字节）
+```
+
+**记录格式**（7 字节头部 + 变长负载）
+
+```
+Physical Record
+┌───────────────────────────────────────────────────────────
+│ CRC32 (4B) │ Length (2B) │ Type (1B) │ Payload (Length B) │
+└───────────────────────────────────────────────────────────
+  CRC32: 覆盖 Type + Length + Payload（小端序）
+  Type:
+    FULL  = 1  — 完整记录在一个块内
+    FIRST = 2  — 多块记录的第一片
+    MIDDLE= 3  — 多块记录的中间片
+    LAST  = 4  — 多块记录的最后一片
+```
+
+**负载编码**
+
+```
+Operation Payload
+┌───────────────────────────────────────────────────────────
+│ Op (1B) │ KeyLen (2B) │ Key │ ValLen (2B) │ Value │
+└───────────────────────────────────────────────────────────
+  Op:
+    PUT    = 1
+    DELETE = 2（ValLen = 0，无 Value 数据）
+```
+
+### 文件命名与编号
+
+```
+<db_path>/
+├── wal_000001.log    ← 最旧的 WAL
+├── wal_000002.log    ← 当前活跃 WAL
+└── ...
+```
+
+DB::Impl 维护 `log_number`（当前 WAL 编号）和 `next_file_number`（下一个可用编号）。
+
+### 写入流程
+
+```
+DB::put(key, value)
+  │
+  ├─ 1. wal->append_put(key, value)   ← 写 WAL
+  ├─ 2. wal->sync()                   ← 根据 sync_mode 决定
+  ├─ 3. memtable.put(key, value)      ← 写 MemTable
+  └─ 4. 检查是否需要 flush
+```
+
+### 恢复流程
+
+```
+DB::open(path, opts)
+  │
+  ├─ 1. 扫描目录，收集所有 wal_XXXXXX.log 文件
+  ├─ 2. 按编号排序，依次重放到 MemTable
+  ├─ 3. 删除已重放的旧 WAL 文件
+  ├─ 4. 创建新 WAL (log_number = max+1)
+  └─ 5. 返回 DB（MemTable 已恢复）
+```
+
+### 同步策略
+
+通过 `Options::wal_sync_mode` 配置：
+
+| 模式 | 说明 |
+|------|------|
+| `SYNC_EVERY_WRITE` | 每条记录后 fsync（最安全，默认） |
+| `SYNC_BATCH` | 每 `wal_sync_batch_size` 条同步一次 |
+| `SYNC_NONE` | 从不同步（最快，有丢数据风险） |
+
+### CRC32 校验
+
+使用内嵌查表法（`src/wal/crc32.h`），256 条目查找表，每条记录的 CRC32 覆盖 Type + Length + Payload。恢复时若 CRC 不匹配则终止重放。
+
+### 物理文件布局
+
+```
+include/minikv/wal/wal.h       ← WAL 公共接口
+src/wal/wal.cpp                ← WAL 实现
+src/wal/crc32.h                ← CRC32 查表法（header-only）
+```
+
 ## 构建
 
 ```bash
@@ -137,4 +254,9 @@ cmake --build build
 cd build && ctest
 # 或直接运行
 ./build/minikv-tests
+
+# 按标签运行
+./build/minikv-tests "[memtable]"
+./build/minikv-tests "[wal]"
+./build/minikv-tests "[kv]"
 ```
